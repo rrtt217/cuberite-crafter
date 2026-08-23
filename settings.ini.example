@@ -1,0 +1,10 @@
+; Crafter 插件配置（拷贝为 settings.ini 后按需修改）
+[Crafter]
+; 红石触发后到执行合成的延迟（游戏刻），原版为 4 游戏刻（2 红石刻）
+CraftDelayTicks=4
+; 合成成功/失败是否播放音效
+EnableSounds=true
+; 合成成功是否播放烟雾粒子
+EnableParticles=true
+; 是否输出调试日志（控制台）
+Debug=false

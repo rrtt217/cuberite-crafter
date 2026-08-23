@@ -1,0 +1,29 @@
+# --- Runtime / deployment ---
+# per-server crafter registry state
+crafters.dat
+# per-server plugin configuration (see settings.ini.example)
+settings.ini
+
+# --- Local scratch / test artifacts ---
+# keep the test_*.lua scripts under _tools/, ignore everything else there
+_tools/*.html
+_tools/*.txt
+_tools/*.py
+_tools/*.json
+_tools/mcc_*
+_tools/mc_init*
+_tools/wa_*
+_tools/session*
+_tools/dbg.lua
+_tools/dbg2.lua
+_tools/dbg3.lua
+_tools/scan_dups.lua
+_tools/BlockDropper.cpp
+_tools/BlockDropper.h
+_tools/BlockDropSpenser.h
+_tools/BlockEntity.cpp
+_tools/BlockEntity.h
+
+# --- Misc ---
+*.log
+.DS_Store
