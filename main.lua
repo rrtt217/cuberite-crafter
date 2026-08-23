@@ -254,7 +254,17 @@ function CrafterOnCraftingNoRecipe(Player, Grid, Recipe)
 			end
 		end
 	end
-	-- Also check that no item sits outside the 3x3 (2x2 grid never reaches here)
+	-- Register the ingredients on the Recipe object.  A plugin recipe that only
+	-- sets the result yields the result but Cuberite never consumes the grid
+	-- (ConsumeIngredients works from the recipe's ingredient list).
+	for Y = 0, 2 do
+		for X = 0, 2 do
+			local Expect = CRAFTER_PATTERN[Y + 1][X + 1]
+			if Expect ~= 0 then
+				Recipe:SetIngredient(X, Y, Expect, 1, 0)
+			end
+		end
+	end
 	Recipe:SetResult(CrafterCore.MakeCrafterItem())
 	return true
 end
