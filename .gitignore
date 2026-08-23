@@ -14,6 +14,7 @@ _tools/mcc_*
 _tools/mc_init*
 _tools/wa_*
 _tools/session*
+_tools/*.sh
 _tools/dbg.lua
 _tools/dbg2.lua
 _tools/dbg3.lua
