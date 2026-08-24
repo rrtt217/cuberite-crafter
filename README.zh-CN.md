@@ -39,6 +39,7 @@
 | 命令 | 权限 | 适用 | 说明 |
 |---|---|---|---|
 | `/crafter [名称]` | `crafter.get` | 所有玩家 | 获得合成器物品（可自定义显示名） |
+| `/crafter lock` / `unlock <槽位> [x y z]` | `crafter.lock` | 所有玩家 | 锁定/解锁你身边合成器的某个槽位（或指定坐标），无需管理员权限 |
 | `/crafter help` | `crafter.admin` | 管理员 | 显示全部子命令 |
 | `/crafter list` | `crafter.admin` | 管理员 | 列出已注册的合成器 |
 | `/crafter info <x> <y> <z>` | `crafter.admin` | 管理员 | 显示方块、名称、禁用槽、格子内容 |
@@ -57,6 +58,8 @@
 
 - `crafter.get` —— 允许玩家获取合成器物品。建议授予默认组/职级（所有需要合成
   合成器的玩家）。
+- `crafter.lock` —— 允许玩家锁定/解锁身边的合成器槽位（`/crafter lock <槽位>`）。
+  建议授予所有玩家（默认组）。
 - `crafter.admin` —— 在游戏内使用全部管理子命令。只建议授予管理员/操作员
   （拥有 `*` 通配权限的职级自动获得）。
 
@@ -68,6 +71,7 @@ CraftDelayTicks=4      ; 红石触发到合成执行的延迟（游戏刻）
 EnableSounds=true      ; 合成音效
 EnableParticles=true   ; 合成粒子
 Debug=false            ; 调试日志
+LockWatchdogTicks=5     ; GUI 锁定扫描间隔（世界刻；0=关闭）
 ```
 
 ## 文件结构

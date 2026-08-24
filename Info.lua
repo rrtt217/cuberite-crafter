@@ -2,7 +2,7 @@
 g_PluginInfo =
 {
 	Name = "Crafter",
-	Version = "0.3",
+	Version = "0.4",
 	Date = "2026-08-24",
 	Description = [[以投掷器为原型实现的合成器：3x3 合成格 + 可禁用槽位、
 红石触发自动合成输出，支持漏斗规则、容器直存与掉落物。]],
@@ -10,7 +10,7 @@ g_PluginInfo =
 	{
 		["/crafter"] = { Permission = "crafter.get",
 			HelpString = "获取一个合成器（可选自定义名称）；" ..
-				"管理子命令需权限 crafter.admin" },
+				"lock/unlock 锁定槽位（crafter.lock），管理子命令需 crafter.admin" },
 	},
 	ConsoleCommands =
 	{
@@ -26,6 +26,10 @@ g_PluginInfo =
 		["crafter.admin"] = {
 			Description = "允许在游戏内使用 /crafter 管理子命令",
 			RecommendedGroups = { "Operator", "Admin" },
+		},
+		["crafter.lock"] = {
+			Description = "允许在游戏内锁定/解锁合成器槽位（/crafter lock|unlock）",
+			RecommendedGroups = { "Default", "Moderator", "Operator", "Admin" },
 		},
 	},
 }

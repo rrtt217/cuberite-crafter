@@ -57,9 +57,12 @@ reverse an unwanted GUI change visibly.
    `Entry.locked[slot]`. An explicit sentinel `LOCK_EMPTY` marks slots that
    must stay empty (a bare `nil` cannot represent "empty" - it looks like
    "never observed" and would let each scan re-accept an insertion).
-2. A throttled `HOOK_TICK` handler (default every 5 ticks ~ 0.25 s,
+2. A throttled `HOOK_WORLD_TICK` handler (default every 5 ticks ~ 0.25 s,
    `LockWatchdogTicks`) reads each disabled slot and compares it with the
-   baseline:
+   baseline. It deliberately runs from the **world tick** hook (world tick
+   thread context, guaranteed not to block) rather than the server-level
+   `HOOK_TICK`, which can deadlock with per-world hooks; scans are restricted
+   to the ticking world:
    - **empty baseline, now filled** - revert (clear the slot), eject the
      whole stack through `Eject()` (front container first, else pickups);
    - **same item, count grew** - revert to the baseline count, eject the
@@ -94,6 +97,22 @@ duplicate.
   rejected items go to the crafter's front (container or pickups) rather
   than back to the clicker's cursor.
 
+## How players lock slots
+
+Vanilla locks slots from inside the GUI (1.21 lock button). That is not
+possible here — there is no window-click hook to catch "the player clicked the
+lock button / a slot". Instead players use the in-game command, which is just
+as practical:
+
+1. Stand next to the crafter you want to configure (or look at your coordinates).
+2. Run `/crafter lock 2` (permission `crafter.lock`, granted to all players)
+   to lock slot 2, or `/crafter unlock 2` to release it.
+3. The plugin resolves the **nearest registered crafter within 8 blocks** and
+   toggles the slot; the optional `[x y z]` arguments target a specific block.
+
+Locked slots then behave as described above: hoppers skip them, the recipe
+matcher ignores them, and the GUI watchdog bounces any inserted items back out.
+
 ## Cost & tuning
 
 Scan cost is proportional to the number of crafters that have locked slots
@@ -102,7 +121,7 @@ disabled slots. Tune with:
 
 ```ini
 [Crafter]
-LockWatchdogTicks=5   ; HOOK_TICK calls between scans; 0 disables the lock
+LockWatchdogTicks=5   ; world-tick callbacks between scans; 0 disables the lock
 ```
 
 ## Verification matrix (real client)

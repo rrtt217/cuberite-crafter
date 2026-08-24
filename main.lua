@@ -93,9 +93,11 @@ function Initialize(Plugin)
 	cPluginManager.AddHook(cPluginManager.HOOK_CRAFTING_NO_RECIPE,   CrafterOnCraftingNoRecipe)
 	-- GUI slot-lock watchdog: rejects player insertions into disabled slots
 	-- (the native dropper window has no per-slot lock and no click hook, so the
-	-- lock is enforced by reverting insertions after the fact).
+	-- lock is enforced by reverting insertions after the fact). Driven from
+	-- HOOK_WORLD_TICK (world thread context, never blocks) rather than the
+	-- server-level HOOK_TICK, which can deadlock with per-world hooks.
 	if (CrafterCore.Cfg.LockWatchdogTicks or 0) > 0 then
-		cPluginManager.AddHook(cPluginManager.HOOK_TICK, CrafterOnTick)
+		cPluginManager.AddHook(cPluginManager.HOOK_WORLD_TICK, CrafterOnWorldTick)
 	end
 
 	-- Player command: /crafter [name]  ->  give the crafter item
@@ -241,15 +243,17 @@ function CrafterOnHopperPushingItem(World, Hopper, SrcSlot, DstBlockEntity, DstS
 	return CrafterCore.OnHopperPushingItem(World, Hopper, SrcSlot, DstBlockEntity, DstSlot)
 end
 
--- Throttled scan for the GUI slot-lock watchdog. HOOK_TICK in this build
--- passes no useful counter, so we count calls ourselves; LockWatchdogTicks
--- hook invocations (default 5, ~4 scans/s on a 20 TPS world) elapse between
--- scans. Returns false so other plugins see the tick too.
+-- Throttled scan for the GUI slot-lock watchdog. Runs from HOOK_WORLD_TICK
+-- (called per world every tick, in the world tick thread so block-entity work
+-- never blocks). This build passes no useful counter, so we count calls
+-- ourselves; LockWatchdogTicks callbacks (default 5) elapse between scans.
+-- Scans are restricted to the ticking world. Returns false to let other
+-- plugins see the tick too.
 local CrafterTickCount = 0
-function CrafterOnTick()
+function CrafterOnWorldTick(World)
 	CrafterTickCount = CrafterTickCount + 1
 	if (CrafterTickCount % CrafterCore.Cfg.LockWatchdogTicks) ~= 0 then return false end
-	CrafterCore.LockWatchdog()
+	CrafterCore.LockWatchdog(World)
 	return false
 end
 
@@ -306,6 +310,17 @@ local CRAFTER_ADMIN_SUBCOMMANDS = {
 
 function HandleCrafterCommand(Split, Player)
 	local Sub = Split[2] and Split[2]:lower() or ""
+	-- Player-facing slot locking: /crafter lock|unlock <slot> [x y z].
+	-- Without coordinates the crafter the player is standing next to is used,
+	-- so locking needs only the crafter.lock permission (no admin rights).
+	if (Sub == "lock") or (Sub == "unlock") then
+		if not Player:HasPermission("crafter.lock") then
+			Player:SendMessageFailure("你没有权限使用 /crafter " .. Sub
+				.. "（需要权限 crafter.lock）")
+			return true
+		end
+		return HandleCrafterLock(Split, Player, Sub == "lock")
+	end
 	if CRAFTER_ADMIN_SUBCOMMANDS[Sub] then
 		if not Player:HasPermission("crafter.admin") then
 			Player:SendMessageFailure("你没有权限使用 /crafter " .. Sub
@@ -329,6 +344,45 @@ function HandleCrafterCommand(Split, Player)
 		Player:SendMessageSuccess("已获得合成器" .. Display .. "，右键放置即可使用")
 	else
 		Player:SendMessageFailure("背包已满，无法获得合成器")
+	end
+	return true
+end
+
+-- /crafter lock|unlock <slot 0-8> [x y z]: toggles the disabled (locked) state
+-- of a grid slot on a crafter. The target is the crafter the player is standing
+-- next to (nearest within 8 blocks), or the coordinates passed explicitly.
+function HandleCrafterLock(Split, Player, WantLocked)
+	local Slot = tonumber(Split[3])
+	if not Slot then
+		Player:SendMessageFailure("用法: /crafter " .. (WantLocked and "lock" or "unlock")
+			.. " <槽位0-8> [x y z]")
+		return true
+	end
+	if (Slot < 0) or (Slot > 8) or (Slot ~= math.floor(Slot)) then
+		Player:SendMessageFailure("槽位必须是 0-8 的整数")
+		return true
+	end
+	local X, Y, Z = nil, nil, nil
+	if Split[4] then
+		X, Y, Z = tonumber(Split[4]), tonumber(Split[5]), tonumber(Split[6])
+		if not (X and Y and Z) then
+			Player:SendMessageFailure("坐标参数不完整（x y z）")
+			return true
+		end
+	end
+	local Entry, Key = CrafterCore.FindCrafterNear(Player, X, Y, Z)
+	if not Entry then
+		Player:SendMessageFailure("附近没有合成器：请站到合成器旁边，或指定坐标 x y z")
+		return true
+	end
+	local NowLocked = Entry.disabled[Slot] ~= nil
+	if WantLocked ~= NowLocked then
+		CrafterCore.ToggleDisabled(Entry, Slot)
+	end
+	if WantLocked then
+		Player:SendMessageSuccess("已锁定槽位 " .. Slot .. "（" .. Key .. "）")
+	else
+		Player:SendMessageSuccess("已解锁槽位 " .. Slot .. "（" .. Key .. "）")
 	end
 	return true
 end

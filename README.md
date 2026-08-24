@@ -58,6 +58,7 @@ ejects the result out of its front, and lets you lock slots that must not be use
 | Command | Permission | Who | Description |
 |---|---|---|---|
 | `/crafter [name]` | `crafter.get` | everyone | Obtain a crafter item (optional custom display name) |
+| `/crafter lock` / `unlock <slot> [x y z]` | `crafter.lock` | everyone | Lock/unlock a grid slot on the crafter you are standing next to (or at the given coordinates) — no admin rights needed |
 | `/crafter help` | `crafter.admin` | operators/admins | Show all subcommands |
 | `/crafter list` | `crafter.admin` | operators/admins | List registered crafters |
 | `/crafter info <x> <y> <z>` | `crafter.admin` | operators/admins | Show block, name, disabled slots, grid contents |
@@ -77,6 +78,8 @@ reference and worked examples.
 
 - `crafter.get` — lets players obtain the crafter item. Assign to your default
   group/rank (anyone you want to be able to craft crafters).
+- `crafter.lock` — lets players lock/unlock grid slots on crafters they are
+  standing next to (`/crafter lock <slot>`). Assign to everyone (default group).
 - `crafter.admin` — in-game access to every management subcommand. Assign to
   operators/admins only. (Ranks with the `*` wildcard permission get it
   automatically.)
@@ -91,6 +94,7 @@ CraftDelayTicks=4      ; ticks between redstone signal and craft (4 = 2 redstone
 EnableSounds=true      ; dispense/fail sound effects
 EnableParticles=true   ; smoke on craft
 Debug=false            ; verbose server-console logging
+LockWatchdogTicks=5     ; GUI-lock scan interval (world ticks; 0 = disabled)
 ```
 
 ## How it works

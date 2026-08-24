@@ -80,7 +80,8 @@ crafter list                      # every registered crafter
 | 9 | **Crafting-table recipe** | 3x3: iron ring + workbench + redstone + dropper in a crafting table | Result: crafter item; after taking it the grid is fully consumed |
 | 10 | **Crafter crafts crafter** | Put the same 3x3 pattern inside a crafter's grid, pulse it | A new crafter item (with name/lore marker) is ejected; placing it registers a new crafter |
 | 11 | **Permission gating** | As a normal player run `/crafter info …`; as an op run it | Normal player is refused (`crafter.admin` required); op sees the details |
-| 12 | **GUI slot lock** | `crafter toggle` a slot on a player-placed crafter, open the window and try to *put* an item into the locked slot (then try to *take* one out) | Insertion is reverted within ~0.25 s: the slot stays as it was and the item lands in the front container / as a pickup (watchdog log `GUI lock: rejected …`); removal is allowed and not reverted |
+| 12 | **GUI slot lock** | Lock a slot (as a normal player: `/crafter lock <slot>` standing next to the crafter, or as admin via `crafter toggle`), open the window and try to *put* an item into the locked slot (then try to *take* one out) | Insertion is reverted within ~0.25 s: the slot stays as it was and the item lands in the front container / as a pickup (watchdog log `GUI lock: rejected …`); removal is allowed and not reverted |
+| 13 | **Player-facing lock/unlock** | As a **Default-rank** player stand next to a crafter and run `/crafter lock 2`, `/crafter unlock 2`; also try `/crafter info …` | Lock/unlock succeeds without coordinates (`已锁定槽位 2（world:…）`), shows up in `crafter list` (`disabled={…}`); the admin-only `info` subcommand is refused with a `crafter.admin` message |
 
 ### 2.3 Redstone wiring notes
 
@@ -96,6 +97,9 @@ crafter list                      # every registered crafter
   window-click hook in this build). Insertions are reverted after
   `LockWatchdogTicks` (default 5) — the item may briefly flash in the slot before
   it bounces out, and the open GUI resyncs automatically.
+- The watchdog runs from **`HOOK_WORLD_TICK`** (world tick thread context), not
+  the server-level `HOOK_TICK` which can deadlock with per-world hooks; scans are
+  restricted to the ticking world.
 - `crafter set`/`setall` on a locked slot is treated as authoritative and
   re-baselines the lock, so automation may still write whatever it needs.
 - Full mechanism, limits and API research: [docs/gui-slot-locking.md](docs/gui-slot-locking.md).

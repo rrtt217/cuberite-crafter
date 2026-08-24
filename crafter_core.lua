@@ -522,13 +522,40 @@ function CrafterCore.LockCheckEntry(Entry)
 end
 
 -- Scans every registered crafter that has disabled slots. Called by the
--- throttled HOOK_TICK handler in main.lua.
-function CrafterCore.LockWatchdog()
+-- throttled HOOK_WORLD_TICK handler in main.lua for the ticking world
+-- (World == nil scans everything, kept for callers that don't know the world).
+function CrafterCore.LockWatchdog(World)
 	for _, Entry in pairs(CrafterCore.Crafters) do
 		if Entry.disabled and next(Entry.disabled) then
-			CrafterCore.LockCheckEntry(Entry)
+			if (World == nil) or (Entry.world == World) then
+				CrafterCore.LockCheckEntry(Entry)
+			end
 		end
 	end
+end
+
+-- Resolves the crafter a player wants to act on: explicit coordinates, or the
+-- nearest registered crafter in the player's world within 8 blocks. Used by the
+-- player-facing /crafter lock|unlock commands so no coordinates or admin rights
+-- are required to lock a slot on the crafter you are standing next to.
+function CrafterCore.FindCrafterNear(Player, X, Y, Z)
+	local PWorld = Player:GetWorld()
+	if X and Y and Z then
+		local Key = CrafterCore.MakeKey(PWorld:GetName(), X, Y, Z)
+		return CrafterCore.Crafters[Key], Key
+	end
+	local PX, PY, PZ = Player:GetPosX(), Player:GetPosY(), Player:GetPosZ()
+	local Best, BestKey, BestD = nil, nil, 64  -- 8 blocks squared
+	for Key, E in pairs(CrafterCore.Crafters) do
+		if (E.world == PWorld) and E.x and E.y and E.z then
+			local DX, DY, DZ = E.x - PX, E.y - PY, E.z - PZ
+			local D = DX * DX + DY * DY + DZ * DZ
+			if D <= BestD then
+				Best, BestKey, BestD = E, Key, D
+			end
+		end
+	end
+	return Best, BestKey
 end
 
 -- ---------------------------------------------------------------------------
