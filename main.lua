@@ -92,8 +92,12 @@ function Initialize(Plugin)
 	cPluginManager.AddHook(cPluginManager.HOOK_CRAFTING_NO_RECIPE,   CrafterOnCraftingNoRecipe)
 
 	-- Player command: /crafter [name]  ->  give the crafter item
+	--                 /crafter <subcommand> ...  ->  management (needs crafter.admin)
+	-- The command is bound to the base crafter.get permission; the management
+	-- subcommands additionally require crafter.admin, checked at runtime so both
+	-- groups share one binding.
 	cPluginManager.BindCommand("/crafter", "crafter.get", HandleCrafterCommand,
-		" ~ 获取一个合成器（可选自定义名称）")
+		" ~ 获取合成器；管理员可用子命令管理（place/set/toggle/pulse/craft/info/list/del）")
 
 	-- Console commands (management & automated testing)
 	cPluginManager.BindConsoleCommand("crafter", HandleCrafterConsole,
@@ -273,7 +277,24 @@ end
 -- Player command
 -- ---------------------------------------------------------------------------
 
+-- Management subcommands that require the crafter.admin permission.
+-- Any other first argument is treated as a custom crafter-item name.
+local CRAFTER_ADMIN_SUBCOMMANDS = {
+	help = true, place = true, give = true, set = true, setall = true,
+	toggle = true, pulse = true, craft = true, info = true, list = true,
+	del = true, save = true, reloaddb = true,
+}
+
 function HandleCrafterCommand(Split, Player)
+	local Sub = Split[2] and Split[2]:lower() or ""
+	if CRAFTER_ADMIN_SUBCOMMANDS[Sub] then
+		if not Player:HasPermission("crafter.admin") then
+			Player:SendMessageFailure("你没有权限使用 /crafter " .. Sub
+				.. "（需要权限 crafter.admin）")
+			return true
+		end
+		return HandleCrafterConsole(Split, Player)
+	end
 	local Name = Split[2] and table.concat(Split, " ", 2) or CrafterCore.CRAFTER_ITEM_NAME
 	local Item = CrafterCore.MakeCrafterItem(Name)
 	if Item:IsEmpty() then

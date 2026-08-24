@@ -1,101 +1,125 @@
-# Crafter（合成器）插件
+# Crafter (合成器) — an automatic crafting block for Cuberite
 
-以 **投掷器（dropper，block 158）为原型** 实现的《我的世界》1.21 合成器（Crafter）
-机制，运行于 Cuberite（1.12.2 协议）。
+A faithful re-implementation of the Minecraft **Crafter** block (1.21 style),
+built on top of Cuberite's native **dropper** block entity. Place it, feed it
+with a hopper, hit it with a redstone signal and it crafts the matching recipe,
+ejects the result out of its front, and lets you lock slots that must not be used.
 
-## 功能
+> **Why a dropper as the prototype?** The dropper provides, for free: redstone
+> activation, block orientation, a persisted 3x3 grid, hopper interoperability and
+> native container eject — exactly what a crafter needs.
 
-- **3×3 合成格**：合成器物理上是投掷器方块，其原生 3×3 cItemGrid 直接作为合成格，
-  而且随世界存档持久化。
-- **GUI 即原生投掷器窗口**：合成器不弹自定义 GUI，右键直接打开投掷器自带的
-  3×3 窗口（槽位即合成格，与背包完全实时同步，天然避免自定义 cLuaWindow
-  在本服务的崩溃/不同步缺陷）。
-- **可禁用槽位**：槽位禁用状态通过 `crafter toggle` 控制台命令管理；
-  禁用的槽不参与配方匹配、不参与漏斗装填，但其中物品保留。
-- **红石触发合成**：投掷器收到红石信号的上升沿（拉杆/按钮/红石块/火把等供电）后，
-  延迟 4 游戏刻（2 红石刻），自动匹配配方、消耗材料并把产物从正面弹出
-  （前方是容器则直接存入，否则生成掉落物）。
-- **漏斗规则**：漏斗只往“第一个空的非禁用槽”（从左到右、从上到下）装填，
-  没有空槽时合并到同类的最小堆叠；全部不可装填则拒收。
-- **合成器物品**：可通过 `/crafter [名称]` 获得，或在普通工作台按原版 3×3 配方制作：
+## Features
 
-  | 铁锭 | 铁锭 | 铁锭 |
-  | 铁锭 | 工作台 | 铁锭 |
-  | 红石粉 | 投掷器 | 红石粉 |
+- **3x3 crafting grid** — the dropper's native `cItemGrid`, saved with the world.
+- **Native GUI** — right-click opens the dropper's own 3x3 window. No custom
+  `cLuaWindow`, so inventory stays fully synchronised (this build's `cLuaWindow`
+  drag/paint path crashes the server).
+- **Redstone crafting** — a rising edge (lever, button, redstone block, torch)
+  schedules a craft 4 game ticks later (2 redstone ticks), matches a recipe,
+  consumes ingredients and ejects the result from the front.
+- **Slot locking** — disabled slots are skipped by the recipe matcher and by
+  hoppers (their items stay put and are never consumed).
+- **Hopper rules** — hoppers fill the first *empty non-disabled* slot
+  (left-to-right, top-to-bottom); if none, they merge into the smallest existing
+  stack of the same item; if the crafter is full it rejects the item.
+- **Output routing** — results drop into a container placed in front (chest,
+  hopper, ...), otherwise they spawn as item pickups.
+- **Crafter item** — obtained via `/crafter` or crafted in a crafting table
+  (vanilla 3x3 recipe). Placing it registers the block; breaking it drops the
+  crafter item plus all its contents.
+- **Crafter crafts crafter** — the crafter's own recipe is injected into the
+  plugin's recipe database, so a crafter can craft a new crafter.
+- **Persistence** — disabled slots and custom names survive restarts
+  (`crafters.dat`).
 
-  放置时会自动注册为合成器；挖掉时掉落合成器物品 + 内部物品。
-- **合成器合成合成器**：该配方同样注入到合成器自己的配方库（原 1.12 crafting.txt
-  没有此条目），往合成器 3×3 格里按上图摆放后触发红石，即可合成出带名称/标记的
-  新合成器并弹出。
-- **持久化**：合成器的禁用槽状态与自定义名称保存在 `crafters.dat`，重启后恢复。
+## Requirements
 
-## 文件结构
+- Cuberite with the **dropper = block 158** mapping (see
+  [Compatibility](#compatibility)). Built and tested against a custom
+  1.12.2-protocol build; other builds need the block-ID mapping adjusted.
+- A vanilla-style `crafting.txt` + `items.ini` in the server folder
+  (the recipe database is parsed in pure Lua at startup).
 
-| 文件 | 作用 |
-|------|------|
-| `main.lua` | 初始化、钩子注册、玩家命令 |
-| `crafter_core.lua` | 核心机制：注册表、红石→合成→弹出、漏斗规则、持久化 |
-| `crafter_recipes.lua` | 纯 Lua 的 crafting.txt/items.ini 解析器 + 3×3 配方匹配器 |
-| `crafter_dbg.lua` | 控制台管理/测试命令 |
-| `settings.ini` | 配置：延迟、音效、粒子、调试开关 |
+## Installation
 
-## 配置（settings.ini）
+1. Copy the `Crafter/` folder into your server's `Plugins/` directory.
+2. Restart the server (or run `reload` in the console).
+3. Grant the permissions below to the groups/ranks of your choice.
+
+## Commands & permissions
+
+| Command | Permission | Who | Description |
+|---|---|---|---|
+| `/crafter [name]` | `crafter.get` | everyone | Obtain a crafter item (optional custom display name) |
+| `/crafter help` | `crafter.admin` | operators/admins | Show all subcommands |
+| `/crafter list` | `crafter.admin` | operators/admins | List registered crafters |
+| `/crafter info <x> <y> <z>` | `crafter.admin` | operators/admins | Show block, name, disabled slots, grid contents |
+| `/crafter place <x> <y> <z> [name]` | `crafter.admin` | operators/admins | Create + register a crafter at coordinates |
+| `/crafter give <player> [name]` | `crafter.admin` | operators/admins | Give a crafter item to another player |
+| `/crafter set` / `setall` | `crafter.admin` | operators/admins | Set one or all grid slots (`item 0` clears) |
+| `/crafter toggle <x> <y> <z> <slot>` | `crafter.admin` | operators/admins | Lock/unlock a slot |
+| `/crafter pulse` / `craft` | `crafter.admin` | operators/admins | Simulate a redstone rising edge / run a craft now |
+| `/crafter del <x> <y> <z>` | `crafter.admin` | operators/admins | Unregister a crafter |
+| `/crafter save` / `reloaddb` | `crafter.admin` | operators/admins | Save the registry / reload the recipe DB |
+
+All management subcommands also exist as the server-console command `crafter`
+(no permission needed there). See [TESTING.md](TESTING.md) for the full command
+reference and worked examples.
+
+**Permission setup:**
+
+- `crafter.get` — lets players obtain the crafter item. Assign to your default
+  group/rank (anyone you want to be able to craft crafters).
+- `crafter.admin` — in-game access to every management subcommand. Assign to
+  operators/admins only. (Ranks with the `*` wildcard permission get it
+  automatically.)
+
+## Configuration
+
+`settings.ini` (in the plugin folder):
 
 ```ini
 [Crafter]
-CraftDelayTicks=4      ; 红石触发到合成执行的延迟（游戏刻）
-EnableSounds=true      ; 合成音效
-EnableParticles=true   ; 合成粒子
-Debug=false            ; 调试日志
+CraftDelayTicks=4      ; ticks between redstone signal and craft (4 = 2 redstone ticks)
+EnableSounds=true      ; dispense/fail sound effects
+EnableParticles=true   ; smoke on craft
+Debug=false            ; verbose server-console logging
 ```
 
-## 玩家命令
+## How it works
 
-- `/crafter [名称]` → 获得合成器物品（权限 `crafter.get`）。
+| File | Role |
+|---|---|
+| `main.lua` | Initialization, hook registration, `/crafter` command dispatcher |
+| `crafter_core.lua` | Crafter registry, redstone→craft→eject, hopper rules, persistence, crafter item |
+| `crafter_recipes.lua` | Pure-Lua `crafting.txt`/`items.ini` parser + 3x3 recipe matcher |
+| `crafter_dbg.lua` | Management interface (console + in-game with `crafter.admin`) |
+| `settings.ini.example` | Sample configuration |
 
-## 控制台管理/测试命令
+A crafter is physically a dropper block entity registered in a plugin-side
+registry. Custom names and disabled slots are tracked by the plugin and are the
+only non-vanilla state. Everything else (grid, orientation, redstone, eject)
+is provided by the dropper underneath.
 
-```
-crafter place  <x> <y> <z> [名称]            ; 在指定坐标生成并注册合成器
-crafter give   <玩家> [名称]                 ; 给玩家一个合成器物品
-crafter set    <x> <y> <z> <槽0-8> <物品ID> [数量] [伤害]   ; 设置合成格
-crafter setall <x> <y> <z> <物品ID> [数量] [伤害]          ; 9 格全设
-crafter toggle <x> <y> <z> <槽>              ; 切换槽位禁用状态
-crafter pulse  <x> <y> <z>                  ; 模拟一次红石脉冲（上升沿）
-crafter craft  <x> <y> <z>                  ; 立即执行一次合成周期
-crafter info   <x> <y> <z> / list / del / save / reloaddb
-```
+## Compatibility
 
-## 本 build 的兼容性说明
+- **Block IDs**: this build maps dropper = 158, dispenser = 23 (note: upstream
+  Cuberite API docs differ). The plugin only references block 158 through
+  `E_BLOCK_DROPPER`.
+- **No custom GUI**: `cLuaWindow` click/drag handling (`OnLeftPaintEnd`) crashes
+  this server build, so the crafter reuses the dropper's native 3x3 window.
+- **Redstone only fires for player-placed blocks**: droppers created via
+  `SetBlock` (e.g. `crafter place`) do not fire `HOOK_DROPSPENSE` and are not
+  marked for saving. Real crafters must be placed with the crafter item.
+- **Binding quirks worked around**: `AddItems` returns the count added and
+  mutates the passed `cItems`; powered droppers set meta bit 0x8 (masked with
+  `% 8` for orientation); `GetValueSetB` mis-parses `"true"` (booleans are read
+  manually); chest block-entities lack `GetContents` on some paths (a
+  `DoWithChestAt` fallback is used for output).
 
-- 本服务器为定制 Cuberite build：**方块 ID 映射为 dropper=158 / dispenser=23**
-  （与官方 API 文档不同，直接使用 Lua 全局 `E_BLOCK_DROPPER`）。
-- **不使用自定义 GUI**：本服务的 cLuaWindow 点击/拖拽路径（`OnLeftPaintEnd`）
-  会崩溃服务端，且窗口物品会与背包不同步；合成器直接使用投掷器原生 3×3 窗口。
-- **红石只对真实客户端放置的投掷器生效**：`SetBlock` 创建的 dropper 不会触发
-  HOOK_DROPSPENSE（也不参与原生红石弹射），因此合成器必须由玩家放置
-  （通过 `/crafter` 或工作台配方获得的合成器物品）。
-- 部分 Lua 绑定受限：`DoWithDropperAt` 只对 dropper(158) 有效；箱子等容器通过
-  `DoWithBlockEntityAt` 取到的实体可能没有 `GetContents`，已做 `DoWithChestAt`
-  回退。
-- `cItemGrid:AddItems` 返回“加入数量”，且会在原地改写传入的 cItems（剩余物），
-  弹射逻辑已按此语义实现。
-- `SetBlock` 放置的方块不会被标记为“需要存档”，重启后丢失；真实玩家放置的
-  方块正常存档。
-- 投掷器被供电时其方块 meta 会置第 4 位（0x8），朝向读取时已做 `% 8` 屏蔽。
-- `GetValueSetB` 在本 build 对 "true" 一律返回 false，布尔配置统一用 `GetValue`
-  手动解析。
+## Testing
 
-## 测试验证（全部通过）
-
-1. 单位测试：789/789 个配方自匹配成功（`_tools/test_recipes.lua`）。
-2. 真实客户端放置合成器 → 插件自动注册（HOOK_PLAYER_PLACED_BLOCK）。
-3. 拉杆拨动（上升沿）→ 延迟 4 刻 → 合成 4×火炬 → 从正面弹出（玩家亲眼确认/捡起）。
-4. 禁用槽位：禁用含煤炭的槽 → 合成失败且物品保留；恢复后可正常合成。
-5. 漏斗：煤炭自动装入第一个空槽；禁用槽被跳过；空的优先、同类最小堆叠合并；
-   合成器满时拒收。
-6. 前方箱子：产物直接存入箱子（DoWithChestAt 回退路径）。
-7. 破坏合成器：掉落合成器物品 + 内部物品，注册自动清除。
-8. 持久化：禁用状态跨重载恢复；网格随世界存档。
-9. 去重：同一上升沿窗口内第二次脉冲被忽略（只合成一次）。
-10. 工作台配方：铁锭+工作台+红石+投掷器 → 合成器（HOOK_CRAFTING_NO_RECIPE）。
+Unit tests live in `_tools/` and the full manual end-to-end procedure (real
+client, redstone, hoppers, persistence) is documented in
+**[TESTING.md](TESTING.md)**.
