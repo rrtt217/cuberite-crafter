@@ -173,6 +173,10 @@ function HandleCrafterConsole(Split, Player)
 					end
 				end
 			end
+			-- Re-baseline disabled slots so the GUI lock accepts the admin's write
+			local ListKey = CrafterCore.MakeKey(World:GetName(), X, Y, Z)
+			local ListEntry = CrafterCore.Crafters[ListKey]
+			if ListEntry then CrafterCore.SnapshotLocked(ListEntry, BE) end
 			return false
 		end)
 		Tell(Player, "crafter grid updated at " .. X .. "," .. Y .. "," .. Z, "success")

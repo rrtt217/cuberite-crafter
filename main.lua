@@ -25,6 +25,7 @@ function Initialize(Plugin)
 	CrafterCore.Cfg.EnableSounds    = CfgBool(Config:GetValue("Crafter", "EnableSounds", "true"))
 	CrafterCore.Cfg.EnableParticles = CfgBool(Config:GetValue("Crafter", "EnableParticles", "true"))
 	CrafterCore.Cfg.Debug           = CfgBool(Config:GetValue("Crafter", "Debug", "false"))
+	CrafterCore.Cfg.LockWatchdogTicks = Config:GetValueSetI("Crafter", "LockWatchdogTicks", 5)
 
 	-- Locate the server files (crafting.txt / items.ini) and register paths
 	local Folder = Plugin:GetLocalFolder()
@@ -90,6 +91,12 @@ function Initialize(Plugin)
 	cPluginManager.AddHook(cPluginManager.HOOK_BLOCK_TO_PICKUPS,     CrafterOnBlockToPickups)
 	cPluginManager.AddHook(cPluginManager.HOOK_HOPPER_PUSHING_ITEM,  CrafterOnHopperPushingItem)
 	cPluginManager.AddHook(cPluginManager.HOOK_CRAFTING_NO_RECIPE,   CrafterOnCraftingNoRecipe)
+	-- GUI slot-lock watchdog: rejects player insertions into disabled slots
+	-- (the native dropper window has no per-slot lock and no click hook, so the
+	-- lock is enforced by reverting insertions after the fact).
+	if (CrafterCore.Cfg.LockWatchdogTicks or 0) > 0 then
+		cPluginManager.AddHook(cPluginManager.HOOK_TICK, CrafterOnTick)
+	end
 
 	-- Player command: /crafter [name]  ->  give the crafter item
 	--                 /crafter <subcommand> ...  ->  management (needs crafter.admin)
@@ -232,6 +239,18 @@ end
 -- Crafter-specific hopper insertion rules
 function CrafterOnHopperPushingItem(World, Hopper, SrcSlot, DstBlockEntity, DstSlot)
 	return CrafterCore.OnHopperPushingItem(World, Hopper, SrcSlot, DstBlockEntity, DstSlot)
+end
+
+-- Throttled scan for the GUI slot-lock watchdog. HOOK_TICK in this build
+-- passes no useful counter, so we count calls ourselves; LockWatchdogTicks
+-- hook invocations (default 5, ~4 scans/s on a 20 TPS world) elapse between
+-- scans. Returns false so other plugins see the tick too.
+local CrafterTickCount = 0
+function CrafterOnTick()
+	CrafterTickCount = CrafterTickCount + 1
+	if (CrafterTickCount % CrafterCore.Cfg.LockWatchdogTicks) ~= 0 then return false end
+	CrafterCore.LockWatchdog()
+	return false
 end
 
 -- Provide the crafter's own crafting recipe in a crafting table:

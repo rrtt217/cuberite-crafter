@@ -20,6 +20,12 @@ ejects the result out of its front, and lets you lock slots that must not be use
   consumes ingredients and ejects the result from the front.
 - **Slot locking** — disabled slots are skipped by the recipe matcher and by
   hoppers (their items stay put and are never consumed).
+- **GUI slot lock** — locked slots cannot be filled through the window either:
+  a watchdog reverts player insertions within ~0.25 s and ejects the rejected
+  items out of the crafter's front (container or pickups), while removal stays
+  allowed — matching vanilla locked-slot behavior. See
+  [docs/gui-slot-locking.md](docs/gui-slot-locking.md) for the mechanism and its
+  limits.
 - **Hopper rules** — hoppers fill the first *empty non-disabled* slot
   (left-to-right, top-to-bottom); if none, they merge into the smallest existing
   stack of the same item; if the crafter is full it rejects the item.
@@ -117,6 +123,10 @@ is provided by the dropper underneath.
   `% 8` for orientation); `GetValueSetB` mis-parses `"true"` (booleans are read
   manually); chest block-entities lack `GetContents` on some paths (a
   `DoWithChestAt` fallback is used for output).
+- **GUI locking is revert-based, not click-based**: this build has no
+  window-click hook and no per-slot lock API, so the plugin detects and reverts
+  insertions into locked slots (the open GUI resyncs automatically). There is no
+  grey "locked" overlay — that is a client-render feature of vanilla 1.21.
 
 ## Testing
 

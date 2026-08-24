@@ -8,3 +8,5 @@ EnableSounds=true
 EnableParticles=true
 ; 是否输出调试日志（控制台）
 Debug=false
+; GUI 锁定看门狗扫描间隔（HOOK_TICK 调用次数，约 5≈0.25 秒；0=关闭 GUI 锁定）
+LockWatchdogTicks=5

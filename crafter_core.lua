@@ -9,9 +9,10 @@
 --   * native player-driven item transport when no plugin GUI is open.
 -- The plugin then layers the crafter behaviour on top:
 --   * protected-block markers + persistence of disabled slots / custom names,
---   * a workbench-style GUI with a read-only result slot,
+--   * the native dropper window as the GUI (3x3 grid, no custom window),
 --   * redstone rising-edge -> delayed craft -> eject (into container or world),
---   * crafter-specific hopper insertion rules (disabled slots + fill order).
+--   * crafter-specific hopper insertion rules (disabled slots + fill order),
+--   * GUI slot lock: insertions into disabled slots are reverted by a watchdog.
 
 CrafterCore = {}
 
@@ -31,6 +32,7 @@ CrafterCore.Cfg = {
 	EnableSounds = true,
 	EnableParticles = true,
 	Debug = false,
+	LockWatchdogTicks = 5,         -- GUI lock scan interval (0 = disabled)
 	Recipes = nil,                 -- recipe database (list) from crafter_recipes
 }
 
@@ -89,6 +91,7 @@ function CrafterCore.Register(BE, a_Name)
 		y = BE:GetPosY(),
 		z = BE:GetPosZ(),
 		disabled = {},
+		locked = {},               -- baseline contents of disabled slots (GUI lock)
 		name = a_Name or CrafterCore.CRAFTER_ITEM_NAME,
 		window = nil,
 		viewers = {},
@@ -414,11 +417,118 @@ end
 function CrafterCore.ToggleDisabled(Entry, Slot)
 	if Entry.disabled[Slot] then
 		Entry.disabled[Slot] = nil
+		if Entry.locked then Entry.locked[Slot] = nil end
 	else
 		Entry.disabled[Slot] = true
 	end
 	CrafterCore.Save()
 	return Entry.disabled[Slot] ~= nil
+end
+
+-- ---------------------------------------------------------------------------
+-- GUI slot lock ("locked slot" baked into the native dropper window)
+-- ---------------------------------------------------------------------------
+--
+-- There is NO Lua hook for window slot clicks in this build (verified: a real
+-- client click fires no plugin hook), so a plugin cannot veto a click directly.
+-- Instead, the watchdog below reverts *insertions* into disabled slots a short
+-- while after they happen, mirroring the vanilla Crafter's locked-slot rule:
+--   * fill attempts (player or hopper) are rejected,
+--   * players may still remove items from a locked slot,
+--   * the open GUI resyncs automatically because the native window is a live
+--     view over the block entity's cItemGrid (server-side SetSlot propagates).
+-- Rejected items are ejected as pickups out of the crafter's front face.
+
+-- Sentinel marking "locked slot is (and must stay) empty". An explicit marker
+-- is needed because an empty baseline stored as nil is indistinguishable from
+-- "never observed yet", which would let each scan re-accept an insertion.
+CrafterCore.LOCK_EMPTY = {}
+
+-- Records the current grid contents of every disabled slot into Entry.locked
+-- (the expected state). Call after any authoritative server-side write to the
+-- grid (e.g. the `crafter set` console/in-game command).
+function CrafterCore.SnapshotLocked(Entry, BE)
+	local G = BE:GetContents()
+	if not G then return end
+	Entry.locked = Entry.locked or {}
+	for Slot in pairs(Entry.disabled or {}) do
+		local It = G:GetSlot(Slot)
+		if It and not It:IsEmpty() then
+			Entry.locked[Slot] = {
+				type = It.m_ItemType,
+				damage = It.m_ItemDamage or 0,
+				count = It.m_ItemCount,
+			}
+		else
+			Entry.locked[Slot] = CrafterCore.LOCK_EMPTY
+		end
+	end
+end
+
+-- Checks one crafter's disabled slots for unauthorized insertions and reverts
+-- them. The very first observation of a slot is always accepted as the new
+-- baseline (so console `set` / restarts never trigger a false revert).
+function CrafterCore.LockCheckEntry(Entry)
+	local W = Entry.world
+	if not W then return end
+	W:DoWithDropperAt(Entry.x, Entry.y, Entry.z, function(BE)
+		local G = BE:GetContents()
+		if not G then return false end
+		Entry.locked = Entry.locked or {}
+		for Slot in pairs(Entry.disabled or {}) do
+			local It = G:GetSlot(Slot)
+			local Cur = nil
+			if It and not It:IsEmpty() then
+				Cur = { type = It.m_ItemType, damage = It.m_ItemDamage or 0, count = It.m_ItemCount }
+			end
+			local Snap = Entry.locked[Slot]
+			local Reject = nil   -- items to eject (amount already reflected in Cur)
+			if Snap == nil then
+				-- never observed yet: accept the current state as baseline
+				Entry.locked[Slot] = Cur or CrafterCore.LOCK_EMPTY
+			elseif Snap == CrafterCore.LOCK_EMPTY then
+				if Cur ~= nil then
+					-- insertion into an empty locked slot: reject the whole stack
+					G:SetSlot(Slot, cItem())
+					Reject = Cur
+				end
+				-- else still empty: nothing to do (baseline stays LOCK_EMPTY)
+			elseif Cur == nil then
+				-- player emptied the slot: allowed (vanilla semantics)
+				Entry.locked[Slot] = CrafterCore.LOCK_EMPTY
+			elseif (Cur.type ~= Snap.type) or (Cur.damage ~= Snap.damage) then
+				-- swapped for a different item: accept and re-baseline
+				Entry.locked[Slot] = Cur
+			elseif Cur.count > Snap.count then
+				-- same item was added by a player: reject the surplus
+				G:SetSlot(Slot, cItem(Snap.type, Snap.count, Snap.damage))
+				local Left = { type = Snap.type, damage = Snap.damage, count = Cur.count - Snap.count }
+				Reject = Left
+			else
+				-- same item, equal or fewer: allowed (removal)
+				Entry.locked[Slot] = Cur
+			end
+			if Reject then
+				-- Eject like a craft result would: into the container in front if one
+				-- accepts it, otherwise as item pickups (never inside a solid block).
+				CrafterCore.Eject(W, BE, cItem(Reject.type, Reject.count, Reject.damage))
+				CrafterCore.DebugLog("GUI lock: rejected x" .. Reject.count .. " of item "
+					.. Reject.type .. " (locked slot " .. Slot .. " at "
+					.. CrafterCore.MakeKey(W:GetName(), Entry.x, Entry.y, Entry.z) .. ")")
+			end
+		end
+		return false
+	end)
+end
+
+-- Scans every registered crafter that has disabled slots. Called by the
+-- throttled HOOK_TICK handler in main.lua.
+function CrafterCore.LockWatchdog()
+	for _, Entry in pairs(CrafterCore.Crafters) do
+		if Entry.disabled and next(Entry.disabled) then
+			CrafterCore.LockCheckEntry(Entry)
+		end
+	end
 end
 
 -- ---------------------------------------------------------------------------
@@ -462,6 +572,7 @@ function CrafterCore.Load()
 			local Name = Undquotify(NameRaw)
 			local Entry = {
 				disabled = {},
+				locked = {},       -- filled lazily by the GUI-lock watchdog
 				name = Name or CrafterCore.CRAFTER_ITEM_NAME,
 				window = nil,
 				viewers = {},

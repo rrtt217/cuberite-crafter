@@ -80,6 +80,7 @@ crafter list                      # every registered crafter
 | 9 | **Crafting-table recipe** | 3x3: iron ring + workbench + redstone + dropper in a crafting table | Result: crafter item; after taking it the grid is fully consumed |
 | 10 | **Crafter crafts crafter** | Put the same 3x3 pattern inside a crafter's grid, pulse it | A new crafter item (with name/lore marker) is ejected; placing it registers a new crafter |
 | 11 | **Permission gating** | As a normal player run `/crafter info …`; as an op run it | Normal player is refused (`crafter.admin` required); op sees the details |
+| 12 | **GUI slot lock** | `crafter toggle` a slot on a player-placed crafter, open the window and try to *put* an item into the locked slot (then try to *take* one out) | Insertion is reverted within ~0.25 s: the slot stays as it was and the item lands in the front container / as a pickup (watchdog log `GUI lock: rejected …`); removal is allowed and not reverted |
 
 ### 2.3 Redstone wiring notes
 
@@ -88,6 +89,16 @@ crafter list                      # every registered crafter
 - A redstone torch, button or block next to the crafter works the same way.
 - The `crafter pulse <x> <y> <z>` command simulates the rising edge directly and
   is useful when no redstone is wired up.
+
+### 2.4 GUI slot lock notes
+
+- Locked slots are enforced by a **revert-on-insert watchdog** (there is no
+  window-click hook in this build). Insertions are reverted after
+  `LockWatchdogTicks` (default 5) — the item may briefly flash in the slot before
+  it bounces out, and the open GUI resyncs automatically.
+- `crafter set`/`setall` on a locked slot is treated as authoritative and
+  re-baselines the lock, so automation may still write whatever it needs.
+- Full mechanism, limits and API research: [docs/gui-slot-locking.md](docs/gui-slot-locking.md).
 
 ## 3. Known quirks relevant to testing
 
@@ -113,3 +124,8 @@ Significant bugs found during development and their regression tests:
   and `/crafter` treated every argument as an item name. Now `/crafter <sub>`
   dispatches to the shared handler behind the `crafter.admin` permission.
   Covered by E2E test #11.
+- **Disabled slots were not enforced in the GUI** — window clicks are not
+  interceptable in this build (no hook fires), so locked slots could be filled by
+  hand. Added a revert-on-insert watchdog with an explicit `LOCK_EMPTY` baseline
+  sentinel. Covered by E2E test #12; mechanism in
+  [docs/gui-slot-locking.md](docs/gui-slot-locking.md).
