@@ -26,9 +26,11 @@ ejects the result out of its front, and lets you lock slots that must not be use
   allowed — matching vanilla locked-slot behavior. See
   [docs/gui-slot-locking.md](docs/gui-slot-locking.md) for the mechanism and its
   limits.
-- **Hopper rules** — hoppers fill the first *empty non-disabled* slot
-  (left-to-right, top-to-bottom); if none, they merge into the smallest existing
-  stack of the same item; if the crafter is full it rejects the item.
+- **Hopper rules** — items arrive **one at a time** at the vanilla hopper rate
+  (one item per 8-tick cycle, never a whole stack at once). They fill the first
+  *empty non-disabled* slot (left-to-right, top-to-bottom); if there is no empty
+  slot they merge into the *smallest* existing stack of the same item; if nothing
+  fits the crafter is treated as full and the item stays in the hopper.
 - **Output routing** — results drop into a container placed in front (chest,
   hopper, ...), otherwise they spawn as item pickups.
 - **Crafter item** — obtained via `/crafter` or crafted in a crafting table

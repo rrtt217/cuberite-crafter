@@ -2,7 +2,7 @@
 g_PluginInfo =
 {
 	Name = "Crafter",
-	Version = "0.4",
+	Version = "0.5",
 	Date = "2026-08-24",
 	Description = [[以投掷器为原型实现的合成器：3x3 合成格 + 可禁用槽位、
 红石触发自动合成输出，支持漏斗规则、容器直存与掉落物。]],

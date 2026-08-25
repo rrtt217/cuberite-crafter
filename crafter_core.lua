@@ -364,55 +364,61 @@ function CrafterCore.FindInsertTarget(Entry, CrafterGrid, SrcItem)
 	return nil
 end
 
+-- Hopper interop: driven by HOOK_HOPPER_PUSHING_ITEM using the build's native
+-- cHopperEntity::MoveItemsToSlot semantics:
+--   * the hook's DstSlot is the destination cell the hopper intends to fill,
+--   * returning TRUE vetoes that move and the native tries the next source
+--     slot for the same destination (documented in the C++ source),
+--   * returning FALSE lets the native move exactly ONE item (CopyOne) and
+--     decrement the source slot by one - no loss, one item per 8-tick cycle,
+--   * the native already fills the first empty destination cell in order
+--     (left-to-right, top-to-bottom) and tops up a taken matching cell when
+--     no empty cell succeeds (the merge rule).
+-- So our handler ONLY vetoes pushes into DISABLED slots; everything else is
+-- handed back to the native, which satisfies the fill-order / merge / reject
+-- rules on its own.
 function CrafterCore.OnHopperPushingItem(World, Hopper, SrcSlot, DstBlockEntity, DstSlot)
 	if not CrafterCore.IsCrafterEntity(DstBlockEntity) then return false end
 	local Entry = CrafterCore.EnsureResolved(DstBlockEntity)
-	local HopperGrid = Hopper:GetContents()
-	local SrcItem = HopperGrid and HopperGrid:GetSlot(SrcSlot)
-	if not SrcItem or SrcItem:IsEmpty() then return true end
-	-- Cache the item type eagerly: this build returns -1 for the *first* field
-	-- access on a hopper-sourced cItem, then the real value on later accesses
-	-- (a binding quirk that used to surface in debug logs).
-	local SrcType = SrcItem.m_ItemType
-
-	local CrafterGrid = DstBlockEntity:GetContents()
-	local Target = CrafterCore.FindInsertTarget(Entry, CrafterGrid, SrcItem)
-	if not Target then
-		-- No legal slot: treat the crafter as full, veto the native push.
+	if not Entry then return false end
+	-- Veto pushes into disabled slots: the native then tries the next slot.
+	if Entry.disabled and Entry.disabled[DstSlot] then
+		CrafterCore.DebugLog("hopper vetoed push into disabled slot " .. DstSlot
+			.. " at " .. CrafterCore.KeyFromEntity(DstBlockEntity))
 		return true
 	end
-
-	local MaxStack = SrcItem:GetMaxStackSize()
-	local DstItem = CrafterGrid:GetSlot(Target)
-	local MoveCount
-	if DstItem:IsEmpty() then
-		MoveCount = math.min(SrcItem.m_ItemCount, MaxStack)
-	else
-		MoveCount = math.min(SrcItem.m_ItemCount, math.max(0, MaxStack - DstItem.m_ItemCount))
+	-- No empty non-disabled slot: the native would top up the FIRST taken slot
+	-- in order, but the spec wants the SMALLEST same-type stack. Veto every
+	-- top-up target except the smallest matching stack so the native walks its
+	-- destination loop onto it. When an empty slot exists, the native's
+	-- first-empty fill already matches the spec and nothing overrides it.
+	for i = 0, 8 do
+		if not Entry.disabled[i] then
+			if DstBlockEntity:GetContents():GetSlot(i):IsEmpty() then return false end
+		end
 	end
-	if MoveCount <= 0 then return true end
-
-	if DstItem:IsEmpty() then
-		CrafterGrid:SetSlot(Target, cItem(SrcType, MoveCount, SrcItem.m_ItemDamage or 0))
-	else
-		DstItem.m_ItemCount = DstItem.m_ItemCount + MoveCount
-		CrafterGrid:SetSlot(Target, DstItem)
+	local HG = Hopper:GetContents()
+	local SrcItem = HG and HG:GetSlot(SrcSlot)
+	if not SrcItem or SrcItem:IsEmpty() then return false end
+	local SrcType = SrcItem.m_ItemType
+	local SrcDamage = SrcItem.m_ItemDamage or 0
+	local Grid = DstBlockEntity:GetContents()
+	local Best, BestCount = DstSlot, math.huge
+	for i = 0, 8 do
+		if not Entry.disabled[i] then
+			local It = Grid:GetSlot(i)
+			if not It:IsEmpty() and (It.m_ItemType == SrcType) and ((It.m_ItemDamage or 0) == SrcDamage) then
+				if It.m_ItemCount < BestCount then Best, BestCount = i, It.m_ItemCount end
+			end
+		end
 	end
-
-	if SrcItem.m_ItemCount <= MoveCount then
-		HopperGrid:SetSlot(SrcSlot, cItem())
-	else
-		SrcItem.m_ItemCount = SrcItem.m_ItemCount - MoveCount
-		HopperGrid:SetSlot(SrcSlot, SrcItem)
+	if DstSlot ~= Best then
+		CrafterCore.DebugLog("hopper vetoed top-up of slot " .. DstSlot
+			.. " (smallest is " .. Best .. " x" .. BestCount .. ")")
+		return true
 	end
-
-	CrafterCore.DebugLog("hopper pushed x" .. MoveCount .. " of item " .. SrcType .. " into slot " .. Target)
-	return true
+	return false
 end
-
--- ---------------------------------------------------------------------------
--- Disabled slots
--- ---------------------------------------------------------------------------
 
 function CrafterCore.ToggleDisabled(Entry, Slot)
 	if Entry.disabled[Slot] then

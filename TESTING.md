@@ -72,7 +72,7 @@ crafter list                      # every registered crafter
 | 1 | **Real-client placement registers the crafter** | Place the crafter item with a client | Log `registered crafter at …`; `crafter list` shows it |
 | 2 | **Redstone rising edge crafts** | Put 4x torch in the grid, flick a lever (or run `crafter pulse`) | 4 game ticks later the torch is consumed and 4x torch pickups spawn in front; `crafter info` shows the slot emptied |
 | 3 | **Disabled slot blocks crafting** | `crafter toggle` the slot holding coal; try to craft a recipe using coal | Craft fails (fail sound), the coal stays in the slot; toggling back allows the craft again |
-| 4 | **Hopper fill order** | Hopper above feeding coal | Coal lands in the first empty non-disabled slot; disabled slots are skipped; when empty slots remain, the smallest matching stack is grown; a full crafter rejects items |
+| 4 | **Hopper fill order** | Hopper above feeding coal (and a mixed set: coal + iron) | Coal arrives **one item at a time** (count grows by 1 per 8-tick cycle, never a whole stack); first empty non-disabled slot is filled left-to-right/top-to-bottom; disabled slots are skipped; with no empty slots the *smallest* same-type stack is topped up; a full crafter rejects the item (it stays in the hopper) |
 | 5 | **Output into container** | Place a chest in front of the dropper's face; craft | Result is deposited into the chest, not spawned as pickups |
 | 6 | **Breaking drops item + contents** | Mine a placed crafter | Pickups contain the crafter item plus all non-empty grid items; `crafter list` no longer shows it |
 | 7 | **Persistence** | `crafter toggle`, then reload the plugin / restart the server | Disabled slots and custom names restored from `crafters.dat`; grid persists with the world |
@@ -133,3 +133,15 @@ Significant bugs found during development and their regression tests:
   hand. Added a revert-on-insert watchdog with an explicit `LOCK_EMPTY` baseline
   sentinel. Covered by E2E test #12; mechanism in
   [docs/gui-slot-locking.md](docs/gui-slot-locking.md).
+- **Breaking a crafter dropped double contents** — the native break also drained
+  the grid into the pickups list, and the handler re-added the same stacks. The
+  handler now detects whether the grid is still populated and, if so, rebuilds the
+  drop list deterministically (clear + one pass + crafter item), warming the
+  -1/0 field quirk before reading. Covered by E2E test #6.
+- **Hopper transfers were a whole stack at once (and hook-based transfers
+  duplicated in this build)** — `HOOK_HOPPER_PUSHING_ITEM` returning true makes
+  Cuberite re-invoke the hook for other slots (documented) and even false
+  mis-handlers duplicated, so the handler only *vetoes* the native's chosen
+  destination slot when it is disabled, or (with no empty slot) when it is not the
+  smallest same-type stack; everything else is left to the native path (exactly
+  one item per 8-tick cycle). Covered by E2E test #4.

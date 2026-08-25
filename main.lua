@@ -89,6 +89,13 @@ function Initialize(Plugin)
 	cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_PLACED_BLOCK,  CrafterOnPlayerPlacedBlock)
 	cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_BROKEN_BLOCK,  CrafterOnPlayerBrokenBlock)
 	cPluginManager.AddHook(cPluginManager.HOOK_BLOCK_TO_PICKUPS,     CrafterOnBlockToPickups)
+	-- Hopper interop runs through HOOK_HOPPER_PUSHING_ITEM with the build's native
+	-- cHopperEntity::MoveItemsToSlot semantics: returning true vetoes that specific
+	-- destination slot (the native then tries the next one), returning false lets
+	-- the native move exactly one item per 8-tick cycle (first-empty fill, top-up
+	-- merge, full = reject). We veto pushes into disabled slots and, when the
+	-- crafter has no empty slot, top-up targets that are not the smallest
+	-- same-type stack (so the native walks its slot loop onto it).
 	cPluginManager.AddHook(cPluginManager.HOOK_HOPPER_PUSHING_ITEM,  CrafterOnHopperPushingItem)
 	cPluginManager.AddHook(cPluginManager.HOOK_CRAFTING_NO_RECIPE,   CrafterOnCraftingNoRecipe)
 	-- GUI slot-lock watchdog: rejects player insertions into disabled slots
@@ -194,37 +201,62 @@ function CrafterOnBlockToPickups(World, Digger, BlockX, BlockY, BlockZ, BlockTyp
 	local Key = CrafterCore.MakeKey(World:GetName(), BlockX, BlockY, BlockZ)
 	local Entry = CrafterCore.Crafters[Key]
 	if not Entry then return false end
-	-- We must NOT clear the pickups list: the native dropper already drained
-	-- its grid into Pickups before this hook (and cleared the entity), so keep
-	-- those and just swap the plain dropper item for the crafter item. If the
-	-- grid is somehow still populated (creative dig, other builds), add it too.
-	local Found = 0
+	-- Deciding between "the native already drained the grid into Pickups" and
+	-- "the grid is still populated" depends on the break path in this build.
+	-- First scan which slots are non-empty (the items in this hook context read
+	-- -1/0 on the FIRST field access - a binding quirk - so we only remember the
+	-- slot numbers here and warm-read + rebuild real items in the second pass).
+	local SlotHits = {}
 	World:DoWithDropperAt(BlockX, BlockY, BlockZ, function(BE)
 		local G = BE:GetContents()
 		if G then
 			for i = 0, 8 do
 				local It = G:GetSlot(i)
-				if It and not It:IsEmpty() then
-					Found = Found + 1
-					Pickups:Add(It)
-				end
+				if It and (not It:IsEmpty()) then SlotHits[#SlotHits + 1] = i end
 			end
 		end
 		return false
 	end)
-	local Replaced = false
-	for i = 0, Pickups:Size() - 1 do
-		local It = Pickups:Get(i)
-		if It and (not It:IsEmpty()) and (It.m_ItemType == CrafterCore.CRAFTER_ITEM_ID) then
-			Pickups:Set(i, CrafterCore.MakeCrafterItem(Entry.name))
-			Replaced = true
-			break
-		end
-	end
-	if not Replaced then
+	if #SlotHits > 0 then
+		-- Grid still populated: rebuild the drop list deterministically from the
+		-- grid (clearing the native copies first) so nothing drops twice.
+		Pickups:Clear()
+		World:DoWithDropperAt(BlockX, BlockY, BlockZ, function(BE)
+			local G = BE:GetContents()
+			if G then
+				for _, Slot in ipairs(SlotHits) do
+					local It = G:GetSlot(Slot)
+					-- binding quirk: first field read returns -1; re-read gives the real value
+					local T = It.m_ItemType
+					if T == -1 then T = It.m_ItemType end
+					local C = It.m_ItemCount
+					if C == -1 then C = It.m_ItemCount end
+					local D = It.m_ItemDamage or 0
+						Pickups:Add(cItem(T, C, D))
+					G:SetSlot(Slot, cItem())
+				end
+			end
+			return false
+		end)
 		Pickups:Add(CrafterCore.MakeCrafterItem(Entry.name))
+		CrafterCore.DebugLog("block-to-pickups: rebuilt from grid (" .. #SlotHits .. " stacks) + crafter item")
+	else
+		-- Grid was already drained by the native path: keep its pickups and just
+		-- swap the plain dropper item for the marked crafter item.
+		local Replaced = false
+		for i = 0, Pickups:Size() - 1 do
+			local It = Pickups:Get(i)
+			if It and (not It:IsEmpty()) and (It.m_ItemType == CrafterCore.CRAFTER_ITEM_ID) then
+				Pickups:Set(i, CrafterCore.MakeCrafterItem(Entry.name))
+				Replaced = true
+				break
+			end
+		end
+		if not Replaced then
+			Pickups:Add(CrafterCore.MakeCrafterItem(Entry.name))
+		end
+		CrafterCore.DebugLog("block-to-pickups: native-drained pickups kept (" .. Pickups:Size() .. "), crafter item swapped")
 	end
-	CrafterCore.DebugLog("block-to-pickups: gridFound=" .. Found .. " pickups=" .. Pickups:Size())
 	return true
 end
 
@@ -243,12 +275,12 @@ function CrafterOnHopperPushingItem(World, Hopper, SrcSlot, DstBlockEntity, DstS
 	return CrafterCore.OnHopperPushingItem(World, Hopper, SrcSlot, DstBlockEntity, DstSlot)
 end
 
--- Throttled scan for the GUI slot-lock watchdog. Runs from HOOK_WORLD_TICK
--- (called per world every tick, in the world tick thread so block-entity work
--- never blocks). This build passes no useful counter, so we count calls
--- ourselves; LockWatchdogTicks callbacks (default 5) elapse between scans.
--- Scans are restricted to the ticking world. Returns false to let other
--- plugins see the tick too.
+-- Throttled scan for the GUI slot-lock watchdog and the hopper normalizer.
+-- Runs from HOOK_WORLD_TICK (called per world every tick, in the world tick
+-- thread so block-entity work never blocks). This build passes no useful
+-- counter, so we count calls ourselves; LockWatchdogTicks callbacks (default
+-- 5) elapse between scans. Scans are restricted to the ticking world. Returns
+-- false to let other plugins see the tick too.
 local CrafterTickCount = 0
 function CrafterOnWorldTick(World)
 	CrafterTickCount = CrafterTickCount + 1
