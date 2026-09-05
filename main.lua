@@ -98,11 +98,14 @@ function Initialize(Plugin)
 	-- same-type stack (so the native walks its slot loop onto it).
 	cPluginManager.AddHook(cPluginManager.HOOK_HOPPER_PUSHING_ITEM,  CrafterOnHopperPushingItem)
 	cPluginManager.AddHook(cPluginManager.HOOK_CRAFTING_NO_RECIPE,   CrafterOnCraftingNoRecipe)
-	-- GUI slot-lock watchdog: rejects player insertions into disabled slots
-	-- (the native dropper window has no per-slot lock and no click hook, so the
-	-- lock is enforced by reverting insertions after the fact). Driven from
-	-- HOOK_WORLD_TICK (world thread context, never blocks) rather than the
-	-- server-level HOOK_TICK, which can deadlock with per-world hooks.
+	-- GUI slot-lock watchdog: normal feed paths already route around locked
+	-- slots (hoppers skip them; a crafter receiver inserts output into the next
+	-- available slot and fails the craft when full), so the watchdog only
+	-- reverts un-interceptable insertions (a real window click - the native
+	-- dropper window has no per-slot lock and no click hook) by carrying the
+	-- items over to the next free slot (popping them out only when full).
+	-- Driven from HOOK_WORLD_TICK (world thread context, never blocks) rather
+	-- than the server-level HOOK_TICK, which can deadlock with per-world hooks.
 	if (CrafterCore.Cfg.LockWatchdogTicks or 0) > 0 then
 		cPluginManager.AddHook(cPluginManager.HOOK_WORLD_TICK, CrafterOnWorldTick)
 	end

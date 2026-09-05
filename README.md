@@ -20,10 +20,14 @@ ejects the result out of its front, and lets you lock slots that must not be use
   consumes ingredients and ejects the result from the front.
 - **Slot locking** — disabled slots are skipped by the recipe matcher and by
   hoppers (their items stay put and are never consumed).
-- **GUI slot lock** — locked slots cannot be filled through the window either:
-  a watchdog reverts player insertions within ~0.25 s and ejects the rejected
-  items out of the crafter's front (container or pickups), while removal stays
-  allowed — matching vanilla locked-slot behavior. See
+- **GUI slot lock** — locked slots cannot be filled through the window
+  either. Normal feed paths never place items into a locked slot: a hopper skips
+  it, and a crafter receiver (*another crafter in front*) inserts the crafted
+  item into the next available slot instead. Only a real player click cannot be
+  intercepted in this build, so a watchdog reverts those insertions within
+  ~0.25 s — items are carried over to the next free slot of the same crafter,
+  and only if the crafter has no slot left at all are they popped out of the
+  front (the documented GUI workaround). See
   [docs/gui-slot-locking.md](docs/gui-slot-locking.md) for the mechanism and its
   limits.
 - **Hopper rules** — items arrive **one at a time** at the vanilla hopper rate
@@ -31,8 +35,12 @@ ejects the result out of its front, and lets you lock slots that must not be use
   *empty non-disabled* slot (left-to-right, top-to-bottom); if there is no empty
   slot they merge into the *smallest* existing stack of the same item; if nothing
   fits the crafter is treated as full and the item stays in the hopper.
-- **Output routing** — results drop into a container placed in front (chest,
-  hopper, ...), otherwise they spawn as item pickups.
+- **Output routing / crafter receiver** — results drop into a container placed
+  in front (chest, hopper, ...), otherwise they spawn as item pickups. If the
+  block in front is *another crafter*, the item is inserted following the
+  crafter's own fill rules (locked slots skipped); if that receiver has no
+  available slot at all, the craft **fails** (ingredients are kept, nothing
+  pops out).
 - **Crafter item** — obtained via `/crafter` or crafted in a crafting table
   (vanilla 3x3 recipe). Placing it registers the block; breaking it drops the
   crafter item plus all its contents.

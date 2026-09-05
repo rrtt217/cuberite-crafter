@@ -2,10 +2,11 @@
 g_PluginInfo =
 {
 	Name = "Crafter",
-	Version = "0.5",
-	Date = "2026-08-24",
+	Version = "0.6",
+	Date = "2026-08-28",
 	Description = [[以投掷器为原型实现的合成器：3x3 合成格 + 可禁用槽位、
-红石触发自动合成输出，支持漏斗规则、容器直存与掉落物。]],
+红石触发自动合成输出，支持漏斗规则、容器直存与掉落物。
+v0.6：合成器接收方按填充规则顺延/合并且不弹出，满则合成失败。]],
 	Commands =
 	{
 		["/crafter"] = { Permission = "crafter.get",

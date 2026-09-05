@@ -13,8 +13,13 @@
   the block entity's `cItemGrid`** - server-side `SetSlot` calls propagate to
   every open GUI instantly. The plugin exploits this with a **watchdog** that
   periodically scans disabled slots and *reverts insertions* a few ticks
-  after they happen, ejecting the rejected items through the normal output
-  path. The result behaves like a vanilla locked slot for filling, while
+  after they happen. Normal feed paths never place items into a locked slot:
+  hoppers skip it and a crafter receiver (another crafter in front) inserts
+  crafted output into the next available slot, failing the craft when no slot
+  remains. The watchdog only covers the last un-interceptable path (a real
+  player click) and **carries those items over to the next free slot** of the
+  same crafter; only when no slot is left at all is it popped out of the front
+  face. The result behaves like a vanilla locked slot for filling, while
   players can still remove items.
 
 ## Why there is no click interception
@@ -63,10 +68,12 @@ reverse an unwanted GUI change visibly.
    thread context, guaranteed not to block) rather than the server-level
    `HOOK_TICK`, which can deadlock with per-world hooks; scans are restricted
    to the ticking world:
-   - **empty baseline, now filled** - revert (clear the slot), eject the
-     whole stack through `Eject()` (front container first, else pickups);
-   - **same item, count grew** - revert to the baseline count, eject the
-     surplus;
+   - **empty baseline, now filled** - revert (clear the slot), then carry the
+     whole stack over to the next available (non-disabled) slot of the same
+     crafter; only when the crafter has no slot at all is it popped out of
+     the front (the GUI workaround - the click itself cannot be blocked);
+   - **same item, count grew** - revert to the baseline count, carry the
+     surplus over to the next available slot (same pop-out fallback);
    - **removal / emptied** - allowed (vanilla semantics: locked slots reject
      filling but players may take items out); baseline updated;
    - **swapped for a different item** - accepted and re-baselined (dupe-safe;
@@ -74,17 +81,18 @@ reverse an unwanted GUI change visibly.
    - **first observation of a slot** - accepted as the baseline (grace for
      restarts and admin `crafter set` writes, which also re-baseline
      explicitly via `SnapshotLocked`).
-3. Because the open window mirrors the grid, the revert is visible to the
-   player right away: the item appears to "bounce back" out of the locked
-   slot (in reality it lands in the front container / as a pickup).
+3. Because the open window mirrors the grid, the carry-over is visible to
+   the player right away: the inserted item appears to slide out of the
+   locked slot into the next free slot of the crafter.
 
 ### Why this design is dupe-safe
 
-The watchdog only ever *removes items that are currently in the slot* and
-ejects them through the standard output path - it never re-creates items
-that were taken out. The one inherently ambiguous operation (a player
-swapping the contents) is deliberately accepted rather than risking a
-duplicate.
+The watchdog only ever *removes items that are currently in the slot* and,
+guided by `CrafterCore.InsertIntoReceiver`, re-places them according to
+the crafter's fill rules (or pops them out only when the crafter is full) - it
+never re-creates items that were taken out. The one inherently ambiguous
+operation (a player swapping the contents) is deliberately accepted rather
+than risking a duplicate.
 
 ## What is still not achievable (and why)
 
@@ -93,9 +101,10 @@ duplicate.
 - **Zero-flicker lock**: the rejected item is visible in the grid for up to
   ~0.25-0.5 s until the next scan reverts it. Lowering `LockWatchdogTicks`
   tightens this at the cost of more scans.
-- **Origin-accurate returns**: the plugin cannot know *who* clicked, so
-  rejected items go to the crafter's front (container or pickups) rather
-  than back to the clicker's cursor.
+- **Origin-accurate returns**: the plugin cannot know *who* clicked or cancel
+  the placement after the fact - the best it can do is carry the items over
+  to the next free slot of the same crafter, popping them to the crafter's
+  front only when the crafter is completely full.
 
 ## How players lock slots
 
@@ -111,7 +120,9 @@ as practical:
    toggles the slot; the optional `[x y z]` arguments target a specific block.
 
 Locked slots then behave as described above: hoppers skip them, the recipe
-matcher ignores them, and the GUI watchdog bounces any inserted items back out.
+matcher ignores them, and anything that lands in a locked slot through an
+un-interceptable path is carried over to the next free slot (or, when the
+crafter is full, popped out of the front as the last-resort workaround).
 
 ## Cost & tuning
 
@@ -128,8 +139,9 @@ LockWatchdogTicks=5   ; world-tick callbacks between scans; 0 disables the lock
 
 | Action | Result |
 |---|---|
-| Insert cobblestone into a locked *empty* slot | rejected; slot stays empty; cobble x64 appears in the front chest; GUI resyncs immediately |
-| Add stone onto a locked slot holding stone x3 | surplus x61 rejected; slot back to x3; chest receives x61 |
+| Cobblestone lands in a locked *empty* slot (un-interceptable path) | slot cleared; cobble x64 carried over to the next free slot; GUI resyncs immediately |
+| Stone added onto a locked slot holding stone x3 | surplus x61 carried over to the next free slot; slot back to x3 |
+| Anything lands in a locked slot while the crafter is *completely full* | popped out of the front (GUI workaround; impossible to cancel the click) |
 | Take stone out of a locked slot | allowed; no restore, no duplicate |
 | Craft a recipe next to locked slots | unaffected; locked slots untouched; no false rejects |
 | Admin `crafter set` on a locked slot | accepted; baseline re-synced (no false revert) |

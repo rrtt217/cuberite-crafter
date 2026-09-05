@@ -12,7 +12,9 @@
 --   * the native dropper window as the GUI (3x3 grid, no custom window),
 --   * redstone rising-edge -> delayed craft -> eject (into container or world),
 --   * crafter-specific hopper insertion rules (disabled slots + fill order),
---   * GUI slot lock: insertions into disabled slots are reverted by a watchdog.
+--   * GUI slot lock: insertions into disabled slots are reverted by a watchdog
+--     (no window-click hook exists, so a click cannot be blocked; normal feed
+--     paths never place items into locked slots - they carry over instead).
 
 CrafterCore = {}
 
@@ -241,10 +243,6 @@ function CrafterCore.DoCraft(Entry)
 			CrafterCore.PlaySound(W, Entry.x, Entry.y, Entry.z, "block.dispenser.fail", 1.0)
 			return false
 		end
-		-- Consume ingredients and write the remainder back into the grid.
-		CrafterRecipes.ConsumeGrid(Grid, Binding)
-		CrafterCore.WriteGrid(BE, Grid)
-		CrafterCore.DebugLog("crafted " .. R.result.type .. "^" .. R.result.damage .. " x" .. R.result.count .. " at " .. Key)
 		-- Output: into the container in front if it accepts, else as pickups.
 		-- The crafter's own recipe must eject the marked crafter item (name + lore)
 		-- so that placing the result registers a new crafter.
@@ -254,6 +252,18 @@ function CrafterCore.DoCraft(Entry)
 		else
 			OutItem = cItem(R.result.type, R.result.count, R.result.damage)
 		end
+		-- A crafter receiver with no available (non-locked) slot must FAIL the
+		-- craft BEFORE the ingredients are consumed: nothing pops out, nothing is
+		-- lost - the recipe simply does not run (vanilla "no output space").
+		if not CrafterCore.CanPlaceFront(W, BE, OutItem) then
+			CrafterCore.DebugLog("craft failed at " .. Key .. " (no output space in front)")
+			CrafterCore.PlaySound(W, Entry.x, Entry.y, Entry.z, "block.dispenser.fail", 1.0)
+			return false
+		end
+		-- Consume ingredients and write the remainder back into the grid.
+		CrafterRecipes.ConsumeGrid(Grid, Binding)
+		CrafterCore.WriteGrid(BE, Grid)
+		CrafterCore.DebugLog("crafted " .. R.result.type .. "^" .. R.result.damage .. " x" .. R.result.count .. " at " .. Key)
 		CrafterCore.Eject(W, BE, OutItem)
 		CrafterCore.PlaySound(W, Entry.x, Entry.y, Entry.z, "block.dispenser.dispense", 1.7)
 		if CrafterCore.Cfg.EnableParticles then
@@ -278,18 +288,112 @@ function CrafterCore.GetFrontCoords(BE)
 	return X + 1, Y, Z
 end
 
+-- Inserts aItem (a single stack) into a crafter's grid following the crafter
+-- fill rules: first empty non-disabled slot (left-to-right, top-to-bottom),
+-- else the non-disabled slot holding the smallest same-type stack, else the
+-- crafter is treated as full. Returns the number of items NOT placed (0 = the
+-- whole stack was placed). Never ejects anything.
+function CrafterCore.InsertIntoReceiver(Entry, Grid, Item)
+	local Type = Item.m_ItemType
+	local Damage = Item.m_ItemDamage or 0
+	local Left = Item.m_ItemCount
+	while Left > 0 do
+		local Slot = CrafterCore.FindInsertTarget(Entry, Grid, Item)
+		if not Slot then return Left end
+		local Dst = Grid:GetSlot(Slot)
+		if Dst:IsEmpty() then
+			local Max = cItem(Type, 1, Damage):GetMaxStackSize()
+			local Put = math.min(Left, Max)
+			Grid:SetSlot(Slot, cItem(Type, Put, Damage))
+			Left = Left - Put
+		else
+			local Free = Dst:GetMaxStackSize() - Dst.m_ItemCount
+			if Free <= 0 then return Left end
+			local Put = math.min(Left, Free)
+			Grid:SetSlot(Slot, cItem(Type, Dst.m_ItemCount + Put, Damage))
+			Left = Left - Put
+		end
+	end
+	return Left
+end
+
+-- True when the block in front of BE can accept the WHOLE aItem without
+-- ejecting it: a crafter receiver must have enough total capacity across its
+-- non-disabled slots (empty slots = a full max-stack each; same-type stacks =
+-- their remaining room; locked slots count nothing). Any other block (plain
+-- container or air) always accepts, since the dropper prototype ejects into
+-- it / as pickups. Capacity-based, so a partial merge slot is counted exactly.
+function CrafterCore.CanPlaceFront(W, BE, Item)
+	local FX, FY, FZ = CrafterCore.GetFrontCoords(BE)
+	local Type = Item.m_ItemType
+	local Damage = Item.m_ItemDamage or 0
+	local Need = Item.m_ItemCount
+	local HitCrafter = false
+	local Capacity = 0
+	W:DoWithBlockEntityAt(FX, FY, FZ, function(Dst)
+		if Dst then
+			local Entry = CrafterCore.EnsureResolved(Dst)
+			if Entry then
+				HitCrafter = true
+				local G = Dst:GetContents()
+				if G then
+					for i = 0, 8 do
+						if not Entry.disabled[i] then
+							local It = G:GetSlot(i)
+							if It:IsEmpty() then
+								Capacity = Capacity + cItem(Type, 1, Damage):GetMaxStackSize()
+							elseif (It.m_ItemType == Type) and ((It.m_ItemDamage or 0) == Damage) then
+								Capacity = Capacity + (It:GetMaxStackSize() - It.m_ItemCount)
+							end
+						end
+					end
+				end
+			end
+		end
+		return false
+	end)
+	-- A non-crafter front (plain container / air) always accepts: the eject
+	-- path handles it (dropper-like AddItems / pickups).
+	if not HitCrafter then return true end
+	return (Capacity >= Need)
+end
+
 -- Ejects an item out of the front of the crafter: into a container in front
--- if one accepts it (like the dropper), otherwise as an item pickup.
-function CrafterCore.Eject(W, BE, Item)
+-- if one accepts it, otherwise as an item pickup. A crafter receiver is fed
+-- with the crafter fill rules (locked slots skipped, item carries over to the
+-- next available slot) and leftovers are returned WITHOUT being ejected.
+-- With a_ForceEject leftover items are always dropped as pickups at the front
+-- (used only by the GUI-lock watchdog's pop-out workaround).
+function CrafterCore.Eject(W, BE, Item, a_ForceEject)
 	local FX, FY, FZ = CrafterCore.GetFrontCoords(BE)
 	local Items = cItems()
 	Items:Add(Item)
-	-- Deposit into the container in front (if any). AddItems() mutates Items in
-	-- place to hold the leftovers and returns the number of items added, so the
-	-- container check must look for a grid method via pcall (some block-entity
-	-- Lua bindings in this build lack GetContents on the shared base class).
+	local ReceiverLeft = nil
+	-- Deposit into a crafter receiver (if the front block is one of ours).
 	W:DoWithBlockEntityAt(FX, FY, FZ, function(Dst)
 		if Dst then
+			local Entry = CrafterCore.EnsureResolved(Dst)
+			if Entry then
+				local G = Dst:GetContents()
+				if G then
+					ReceiverLeft = CrafterCore.InsertIntoReceiver(Entry, G, Item)
+				else
+					ReceiverLeft = Item.m_ItemCount
+				end
+				if (ReceiverLeft > 0) and a_ForceEject then
+					-- Workaround path: a full crafter receiver in front must not
+					-- swallow the items - drop the remainder as pickups.
+					local Drop = cItems()
+					Drop:Add(cItem(Item.m_ItemType, ReceiverLeft, Item.m_ItemDamage or 0))
+					W:SpawnItemPickups(Drop, FX, FY, FZ, 0.6)
+					ReceiverLeft = 0
+				end
+				return false
+			end
+			-- Non-crafter container: AddItems() mutates Items in place to hold the
+			-- leftovers and returns the number of items added, so the container
+			-- check must look for a grid method via pcall (some block-entity Lua
+			-- bindings in this build lack GetContents on the shared base class).
 			local ok, G = pcall(function() return Dst:GetContents() end)
 			if ok and G then
 				pcall(function() G:AddItems(Items, true) end)
@@ -297,6 +401,13 @@ function CrafterCore.Eject(W, BE, Item)
 		end
 		return false
 	end)
+	if ReceiverLeft ~= nil then
+		local Taken = Item.m_ItemCount - ReceiverLeft
+		CrafterCore.DebugLog("receiver at " .. FX .. "," .. FY .. "," .. FZ
+			.. " took x" .. Taken .. " of item " .. Item.m_ItemType
+			.. ", leftover x" .. ReceiverLeft)
+		return ReceiverLeft
+	end
 	-- Fallback for containers whose generic block-entity binding lacks
 	-- GetContents in this build (chests fetch fine from some contexts but not
 	-- from the plugin env): try the chest-specific accessor too.
@@ -437,13 +548,18 @@ end
 --
 -- There is NO Lua hook for window slot clicks in this build (verified: a real
 -- client click fires no plugin hook), so a plugin cannot veto a click directly.
--- Instead, the watchdog below reverts *insertions* into disabled slots a short
--- while after they happen, mirroring the vanilla Crafter's locked-slot rule:
---   * fill attempts (player or hopper) are rejected,
+-- Normal feed paths (hopper, craft output into a crafter receiver) already
+-- route around locked slots: items carry over to the next available slot and,
+-- when no slot exists, the feed simply fails - nothing pops out. The watchdog
+-- below only exists for the remaining un-interceptable path (player GUI) and
+-- reverts *insertions* into disabled slots a short while after they happen:
+--   * the items are carried over to the next available slot of the same
+--     crafter (like a hopper feed), or if the crafter has no slot left at all
+--     they are popped out of the front face (the GUI workaround - the click
+--     itself cannot be blocked);
 --   * players may still remove items from a locked slot,
 --   * the open GUI resyncs automatically because the native window is a live
 --     view over the block entity's cItemGrid (server-side SetSlot propagates).
--- Rejected items are ejected as pickups out of the crafter's front face.
 
 -- Sentinel marking "locked slot is (and must stay) empty". An explicit marker
 -- is needed because an empty baseline stored as nil is indistinguishable from
@@ -515,12 +631,20 @@ function CrafterCore.LockCheckEntry(Entry)
 				Entry.locked[Slot] = Cur
 			end
 			if Reject then
-				-- Eject like a craft result would: into the container in front if one
-				-- accepts it, otherwise as item pickups (never inside a solid block).
-				CrafterCore.Eject(W, BE, cItem(Reject.type, Reject.count, Reject.damage))
-				CrafterCore.DebugLog("GUI lock: rejected x" .. Reject.count .. " of item "
-					.. Reject.type .. " (locked slot " .. Slot .. " at "
-					.. CrafterCore.MakeKey(W:GetName(), Entry.x, Entry.y, Entry.z) .. ")")
+				-- The item had to leave the locked slot. First carry it over to the
+				-- next available (non-locked) slot of this same crafter, exactly
+				-- like a hopper feed would. Only when the crafter genuinely has no
+				-- slot left is it popped out of the front (the GUI workaround).
+				local Key = CrafterCore.MakeKey(W:GetName(), Entry.x, Entry.y, Entry.z)
+				local Left = CrafterCore.InsertIntoReceiver(Entry, G, cItem(Reject.type, Reject.count, Reject.damage))
+				if Left <= 0 then
+					CrafterCore.DebugLog("GUI lock: carried x" .. Reject.count .. " of item "
+						.. Reject.type .. " to next slot (locked slot " .. Slot .. " at " .. Key .. ")")
+				else
+					CrafterCore.Eject(W, BE, cItem(Reject.type, Left, Reject.damage), true)
+					CrafterCore.DebugLog("GUI lock: rejected x" .. Left .. " of item "
+						.. Reject.type .. " (no slot left, locked slot " .. Slot .. " at " .. Key .. ")")
+				end
 			end
 		end
 		return false
